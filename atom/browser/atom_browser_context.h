@@ -5,6 +5,8 @@
 #ifndef ATOM_BROWSER_ATOM_BROWSER_CONTEXT_H_
 #define ATOM_BROWSER_ATOM_BROWSER_CONTEXT_H_
 
+#include <string>
+
 #include "brightray/browser/browser_context.h"
 
 namespace atom {
@@ -19,6 +21,7 @@ class AtomBrowserContext : public brightray::BrowserContext {
   virtual ~AtomBrowserContext();
 
   // brightray::URLRequestContextGetter::Delegate:
+  std::string GetUserAgent() override;
   net::URLRequestJobFactory* CreateURLRequestJobFactory(
       content::ProtocolHandlerMap* handlers,
       content::URLRequestInterceptorScopedVector* interceptors) override;
@@ -28,6 +31,9 @@ class AtomBrowserContext : public brightray::BrowserContext {
   // content::BrowserContext:
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
+
+  // brightray::BrowserContext:
+  void RegisterPrefs(PrefRegistrySimple* pref_registry) override;
 
   AtomURLRequestJobFactory* job_factory() const { return job_factory_; }
 

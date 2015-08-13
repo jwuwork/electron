@@ -6,16 +6,25 @@
 
 #include "atom/browser/atom_browser_main_parts.h"
 #include "atom/browser/atom_download_manager_delegate.h"
+#include "atom/browser/browser.h"
 #include "atom/browser/net/atom_url_request_job_factory.h"
 #include "atom/browser/net/asar/asar_protocol_handler.h"
 #include "atom/browser/net/http_protocol_handler.h"
 #include "atom/browser/web_view_manager.h"
+#include "atom/common/atom_version.h"
+#include "atom/common/chrome_version.h"
 #include "atom/common/options_switches.h"
 #include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/prefs/pref_registry_simple.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/worker_pool.h"
+#include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/user_agent.h"
 #include "net/ftp/ftp_network_layer.h"
 #include "net/url_request/data_protocol_handler.h"
 #include "net/url_request/ftp_protocol_handler.h"
@@ -37,6 +46,14 @@ class NoCacheBackend : public net::HttpCache::BackendFactory {
   }
 };
 
+std::string RemoveWhitespace(const std::string& str) {
+  std::string trimmed;
+  if (base::RemoveChars(str, " ", &trimmed))
+    return trimmed;
+  else
+    return str;
+}
+
 }  // namespace
 
 AtomBrowserContext::AtomBrowserContext()
@@ -44,6 +61,23 @@ AtomBrowserContext::AtomBrowserContext()
 }
 
 AtomBrowserContext::~AtomBrowserContext() {
+}
+
+std::string AtomBrowserContext::GetUserAgent() {
+  Browser* browser = Browser::Get();
+  std::string name = RemoveWhitespace(browser->GetName());
+  std::string user_agent;
+  if (name == ATOM_PRODUCT_NAME) {
+    user_agent = "Chrome/" CHROME_VERSION_STRING " "
+                 ATOM_PRODUCT_NAME "/" ATOM_VERSION_STRING;
+  } else {
+    user_agent = base::StringPrintf(
+        "%s/%s Chrome/%s " ATOM_PRODUCT_NAME "/" ATOM_VERSION_STRING,
+        name.c_str(),
+        browser->GetVersion().c_str(),
+        CHROME_VERSION_STRING);
+  }
+  return content::BuildUserAgentFromProduct(user_agent);
 }
 
 net::URLRequestJobFactory* AtomBrowserContext::CreateURLRequestJobFactory(
@@ -113,6 +147,13 @@ content::BrowserPluginGuestManager* AtomBrowserContext::GetGuestManager() {
   if (!guest_manager_)
     guest_manager_.reset(new WebViewManager(this));
   return guest_manager_.get();
+}
+
+void AtomBrowserContext::RegisterPrefs(PrefRegistrySimple* pref_registry) {
+  pref_registry->RegisterFilePathPref(prefs::kSelectFileLastDirectory,
+                                      base::FilePath());
+  pref_registry->RegisterFilePathPref(prefs::kDownloadDefaultDirectory,
+                                      base::FilePath());
 }
 
 }  // namespace atom

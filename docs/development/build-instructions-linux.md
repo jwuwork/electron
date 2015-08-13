@@ -17,7 +17,7 @@ On Ubuntu, install the following libraries:
 $ sudo apt-get install build-essential clang libdbus-1-dev libgtk2.0-dev \
                        libnotify-dev libgnome-keyring-dev libgconf2-dev \
                        libasound2-dev libcap-dev libcups2-dev libxtst-dev \
-                       libxss1 gcc-multilib g++-multilib
+                       libxss1 libnss3-dev gcc-multilib g++-multilib
 ```
 
 Other distributions may offer similar packages for installation via package
@@ -48,7 +48,15 @@ $ ./script/bootstrap.py -v
 
 ### Cross compilation
 
-If you want to cross compile for `arm` or `ia32` targets, you can pass the
+If you want to build for `arm` target, you should also install following
+dependencies:
+
+```bash
+$ sudo apt-get install libc6-dev-armhf-cross linux-libc-dev-armhf-cross \
+                       g++-arm-linux-gnueabihf
+```
+
+And to cross compile for `arm` or `ia32` targets, you should pass the
 `--target_arch` parameter to the `bootstrap.py` script:
 
 ```bash
@@ -98,14 +106,22 @@ Make sure you have installed all the build dependencies.
 
 ### error while loading shared libraries: libtinfo.so.5
 
-Prebulit `clang` will try to link to `libtinfo.so.5`. Depending on the host architecture,
-symlink to appropirate `libncurses`
+Prebulit `clang` will try to link to `libtinfo.so.5`. Depending on the host
+architecture, symlink to appropriate `libncurses`
 
 ```bash
 $ sudo ln -s /usr/lib/libncurses.so.5 /usr/lib/libtinfo.so.5
 ```
 
 ## Tests
+
+Test your changes confirm to the project coding style using:
+
+```bash
+$ ./script/cpplint.py
+```
+
+Test functionality using:
 
 ```bash
 $ ./script/test.py

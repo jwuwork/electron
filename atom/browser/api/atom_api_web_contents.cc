@@ -13,7 +13,9 @@
 #include "atom/browser/native_window.h"
 #include "atom/browser/web_view_guest_delegate.h"
 #include "atom/common/api/api_messages.h"
-#include "atom/common/event_emitter_caller.h"
+#include "atom/common/api/event_emitter_caller.h"
+#include "atom/common/native_mate_converters/callback.h"
+#include "atom/common/native_mate_converters/file_path_converter.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
 #include "atom/common/native_mate_converters/gurl_converter.h"
 #include "atom/common/native_mate_converters/image_converter.h"
@@ -36,10 +38,10 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
-#include "native_mate/callback.h"
 #include "native_mate/dictionary.h"
 #include "native_mate/object_template_builder.h"
 #include "net/http/http_response_headers.h"
+#include "net/url_request/static_http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
 
 #include "atom/common/node_includes.h"
@@ -50,6 +52,12 @@ struct PrintSettings {
   bool silent;
   bool print_background;
 };
+
+void SetUserAgentInIO(scoped_refptr<net::URLRequestContextGetter> getter,
+                      std::string user_agent) {
+  getter->GetURLRequestContext()->set_http_user_agent_settings(
+      new net::StaticHttpUserAgentSettings("en-us,en", user_agent));
+}
 
 }  // namespace
 
@@ -142,6 +150,7 @@ WebContents::WebContents(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       type_(REMOTE) {
   AttachAsUserData(web_contents);
+  web_contents->SetUserAgentOverride(GetBrowserContext()->GetUserAgent());
 }
 
 WebContents::WebContents(const mate::Dictionary& options) {
@@ -167,6 +176,8 @@ WebContents::WebContents(const mate::Dictionary& options) {
   Observe(web_contents);
   AttachAsUserData(web_contents);
   InitWithWebContents(web_contents);
+
+  web_contents->SetUserAgentOverride(GetBrowserContext()->GetUserAgent());
 
   if (is_guest) {
     guest_delegate_->Initialize(this);
@@ -547,14 +558,23 @@ bool WebContents::IsCrashed() const {
 
 void WebContents::SetUserAgent(const std::string& user_agent) {
   web_contents()->SetUserAgentOverride(user_agent);
+  scoped_refptr<net::URLRequestContextGetter> getter =
+      web_contents()->GetBrowserContext()->GetRequestContext();
+  getter->GetNetworkTaskRunner()->PostTask(FROM_HERE,
+      base::Bind(&SetUserAgentInIO, getter, user_agent));
+}
+
+std::string WebContents::GetUserAgent() {
+  return web_contents()->GetUserAgentOverride();
 }
 
 void WebContents::InsertCSS(const std::string& css) {
   web_contents()->InsertCSS(css);
 }
 
-void WebContents::ExecuteJavaScript(const base::string16& code) {
-  web_contents()->GetMainFrame()->ExecuteJavaScript(code);
+void WebContents::ExecuteJavaScript(const base::string16& code,
+                                    bool has_user_gesture) {
+  Send(new AtomViewMsg_ExecuteJavaScript(routing_id(), code, has_user_gesture));
 }
 
 void WebContents::OpenDevTools(mate::Arguments* args) {
@@ -619,9 +639,7 @@ void WebContents::InspectServiceWorker() {
 
 v8::Local<v8::Value> WebContents::Session(v8::Isolate* isolate) {
   if (session_.IsEmpty()) {
-    mate::Handle<api::Session> handle = Session::CreateFrom(
-        isolate,
-        static_cast<AtomBrowserContext*>(web_contents()->GetBrowserContext()));
+    auto handle = Session::CreateFrom(isolate, GetBrowserContext());
     session_.Reset(isolate, handle.ToV8());
   }
   return v8::Local<v8::Value>::New(isolate, session_);
@@ -673,6 +691,22 @@ void WebContents::PrintToPDF(const base::DictionaryValue& setting,
       PrintToPDF(setting, callback);
 }
 
+void WebContents::AddWorkSpace(const base::FilePath& path) {
+  if (path.empty()) {
+    node::ThrowError(isolate(), "path cannot be empty");
+    return;
+  }
+  DevToolsAddFileSystem(path);
+}
+
+void WebContents::RemoveWorkSpace(const base::FilePath& path) {
+  if (path.empty()) {
+    node::ThrowError(isolate(), "path cannot be empty");
+    return;
+  }
+  DevToolsRemoveFileSystem(path);
+}
+
 void WebContents::Undo() {
   web_contents()->Undo();
 }
@@ -717,6 +751,14 @@ void WebContents::ReplaceMisspelling(const base::string16& word) {
   web_contents()->ReplaceMisspelling(word);
 }
 
+void WebContents::Focus() {
+  web_contents()->Focus();
+}
+
+void WebContents::TabTraverse(bool reverse) {
+  web_contents()->FocusThroughTabTraversal(reverse);
+}
+
 bool WebContents::SendIPCMessage(const base::string16& channel,
                                  const base::ListValue& args) {
   return Send(new AtomViewMsg_Message(routing_id(), channel, args));
@@ -755,6 +797,7 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("_goToOffset", &WebContents::GoToOffset)
         .SetMethod("isCrashed", &WebContents::IsCrashed)
         .SetMethod("setUserAgent", &WebContents::SetUserAgent)
+        .SetMethod("getUserAgent", &WebContents::GetUserAgent)
         .SetMethod("insertCSS", &WebContents::InsertCSS)
         .SetMethod("_executeJavaScript", &WebContents::ExecuteJavaScript)
         .SetMethod("openDevTools", &WebContents::OpenDevTools)
@@ -775,6 +818,8 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("unselect", &WebContents::Unselect)
         .SetMethod("replace", &WebContents::Replace)
         .SetMethod("replaceMisspelling", &WebContents::ReplaceMisspelling)
+        .SetMethod("focus", &WebContents::Focus)
+        .SetMethod("tabTraverse", &WebContents::TabTraverse)
         .SetMethod("_send", &WebContents::SendIPCMessage, true)
         .SetMethod("setSize", &WebContents::SetSize)
         .SetMethod("setAllowTransparency", &WebContents::SetAllowTransparency)
@@ -785,6 +830,8 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("inspectServiceWorker", &WebContents::InspectServiceWorker)
         .SetMethod("print", &WebContents::Print)
         .SetMethod("_printToPDF", &WebContents::PrintToPDF)
+        .SetMethod("addWorkSpace", &WebContents::AddWorkSpace)
+        .SetMethod("removeWorkSpace", &WebContents::RemoveWorkSpace)
         .SetProperty("session", &WebContents::Session)
         .Build());
 
@@ -794,6 +841,10 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
 
 bool WebContents::IsDestroyed() const {
   return !IsAlive();
+}
+
+AtomBrowserContext* WebContents::GetBrowserContext() const {
+  return static_cast<AtomBrowserContext*>(web_contents()->GetBrowserContext());
 }
 
 void WebContents::OnRendererMessage(const base::string16& channel,
